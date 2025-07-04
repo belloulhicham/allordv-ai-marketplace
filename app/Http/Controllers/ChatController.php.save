@@ -1,0 +1,203 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\ServiceZone;
+use App\Services\N8nService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+
+class ChatController extends Controller
+{
+    protected $n8nService;
+    
+    public function __construct(N8nService $n8nService)
+    {
+        $this->n8nService = $n8nService;
+    }
+    
+    public function index()
+    {
+        // Récupérer les agents IA disponibles
+        $agents = ServiceZone::where('status', 1)
+                            ->whereNotNull('ai_sector')
+                            ->get();
+        
+        $pageTitle = 'Chat avec les Agents IA';
+        
+        return view('chat.index', compact('agents', 'pageTitle'));
+    }
+    
+    /**
+     * Chat avec un agent via n8n
+     */
+    public function chat(Request $request)
+    {
+        try {
+            $agent = ServiceZone::findOrFail($request->agent_id);
+            
+            // Envoyer le message via n8n
+            $result = $this->n8nService->sendToAgent(
+                $agent->id,
+                $request->message,
+                Auth::id() ?? 'demo_user_' . session()->getId()
+            );
+            
+            if ($result['success']) {
+                // Enregistrer la conversation
+                $this->recordConversation(
+                    $agent->id, 
+                    $request->message, 
+                    $result['data']['response'] ?? $result['response'],
+                    Auth::id()
+                );
+                
+                return response()->json([
+                    'message' => $result['data']['response'] ?? $result['response'],
+                    'agent_name' => $agent->name,
+                    'agent_sector' => $agent->ai_sector,
+                    'timestamp' => now()->format('H:i')
+                ]);
+            } else {
+                return response()->json([
+                    'error' => $result['error'] ?? 'Agent temporairement indisponible'
+                ], 500);
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Chat Error', [
+                'agent_id' => $request->agent_id,
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Erreur de communication avec l\'agent: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Chat de démonstration (limité)
+     */
+    public function demoChat(Request $request)
+    {
+        try {
+            $agent = ServiceZone::findOrFail($request->agent_id);
+            
+            // Vérifier les limites de démo (3 messages par défaut)
+            $demoCount = session("demo_count_agent_{$agent->id}", 0);
+            $demoLimit = 3; // Vous pouvez ajouter ce champ à la DB plus tard
+            
+            if ($demoCount >= $demoLimit) {
+                return response()->json([
+                    'error' => 'Limite de démo atteinte (' . $demoLimit . ' messages). Achetez l\'agent pour continuer.',
+                    'purchase_url' => route('catalog.show', $agent->id),
+                    'demo_limit_reached' => true
+                ], 429);
+            }
+            
+            // Envoyer le message via n8n avec préfixe DEMO
+            $demoMessage = "[DÉMO " . ($demoCount + 1) . "/" . $demoLimit . "] " . $request->message;
+            $result = $this->n8nService->sendToAgent(
+                $agent->id,
+                $demoMessage,
+                'demo_' . session()->getId()
+            );
+            
+            if ($result['success']) {
+                // Incrémenter le compteur de démo
+                session(["demo_count_agent_{$agent->id}" => $demoCount + 1]);
+                
+                // Ajouter un message de limitation
+                $response = $result['data']['response'] ?? $result['response'];
+                if ($demoCount + 1 >= $demoLimit) {
+                    $response .= "\n\n🚫 Limite de démo atteinte. Achetez l'agent pour des conversations illimitées !";
+                } else {
+                    $response .= "\n\n💡 Démo " . ($demoCount + 1) . "/" . $demoLimit . " - " . ($demoLimit - $demoCount - 1) . " messages restants.";
+                }
+                
+                return response()->json([
+                    'message' => $response,
+                    'agent_name' => $agent->name,
+                    'demo_remaining' => $demoLimit - ($demoCount + 1),
+                    'is_demo' => true,
+                    'timestamp' => now()->format('H:i')
+                ]);
+            } else {
+                return response()->json([
+                    'error' => $result['error'] ?? 'Erreur de communication'
+                ], 500);
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Demo Chat Error', [
+                'agent_id' => $request->agent_id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Erreur de communication avec l\'agent'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Récupérer un agent spécifique
+     */
+    public function getAgent($id)
+    {
+        try {
+            $agent = ServiceZone::findOrFail($id);
+            
+            return response()->json([
+                'id' => $agent->id,
+                'name' => $agent->name,
+                'sector' => $agent->ai_sector,
+                'personality' => $agent->ai_personality,
+                'specializations' => $agent->ai_specializations,
+                'model' => 'n8n + Gemini',
+                'status' => $agent->status ? 'active' : 'inactive'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Agent non trouvé'
+            ], 404);
+        }
+    }
+    
+    /**
+     * Tester la connexion n8n
+     */
+    public function testN8nConnection()
+    {
+        $result = $this->n8nService->testConnection();
+        
+        return response()->json($result);
+    }
+    
+    /**
+     * Enregistrer une conversation (logs pour l'instant)
+     */
+    private function recordConversation($agentId, $userMessage, $agentResponse, $userId = null)
+    {
+        try {
+            // Pour l'instant, on log en attendant la table conversations
+            Log::info('AI Conversation', [
+                'agent_id' => $agentId,
+                'user_id' => $userId,
+                'user_message' => substr($userMessage, 0, 100),
+                'agent_response' => substr($agentResponse, 0, 100),
+                'timestamp' => now(),
+                'via' => 'n8n'
+            ]);
+            
+            // TODO: Créer une table conversations plus tard
+            // Conversation::create([...]);
+        } catch (\Exception $e) {
+            Log::error('Recording error: ' . $e->getMessage());
+        }
+    }
+}
