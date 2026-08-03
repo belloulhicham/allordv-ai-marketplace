@@ -5,7 +5,10 @@ node_modules
 /vendor
 .env
 .env.backup
+.env.old
+.env.save
 .phpunit.result.cache
+/storage/logs/*.log
 docker-compose.override.yml
 Homestead.json
 Homestead.yaml
