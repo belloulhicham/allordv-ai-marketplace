@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "instagram-automation": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/instagram-automation/SKILL.md",
+      "computedHash": "f4e5391b003a8464708fd9683f269deb2fcab8f30724decec49eab8ffb459a74"
+    }
+  }
+}
