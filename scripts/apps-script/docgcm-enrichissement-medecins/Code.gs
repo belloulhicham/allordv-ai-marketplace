@@ -82,7 +82,7 @@ const HEADERS_MEDECINS = [
   'Statut', 'Téléphone', 'Adresse', 'Nom trouvé (Places)', 'Lien Maps', 'Date traitement'
 ];
 const HEADERS_CLINIQUES = [
-  'Nom clinique', 'Ville', 'Type', 'Website', 'PlaceId', 'Statut', 'Date découverte'
+  'Nom clinique', 'Ville', 'Type', 'Website', 'Téléphone', 'Adresse', 'PlaceId', 'Statut', 'Date découverte'
 ];
 const HEADERS_MEDECINS_CLINIQUES = [
   'Nom', 'Prénom', 'Spécialité', 'Téléphone', 'Email', 'Clinique source', 'Ville', 'Date extraction'
@@ -118,13 +118,14 @@ function setupSheets() {
 
 function viderCliniques() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  [SHEET_CLINIQUES, SHEET_MEDECINS_CLINIQUES].forEach(nom => {
+  [[SHEET_CLINIQUES, HEADERS_CLINIQUES], [SHEET_MEDECINS_CLINIQUES, HEADERS_MEDECINS_CLINIQUES]].forEach(([nom, headers]) => {
     const sheet = ss.getSheetByName(nom);
-    if (sheet && sheet.getLastRow() > 1) {
-      sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
-    }
+    if (!sheet) return;
+    sheet.clear();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
   });
-  alerte('"Cliniques" et "Médecins - Cliniques" vidées. Relance "1. Découvrir les cliniques" pour repartir à zéro.');
+  alerte('"Cliniques" et "Médecins - Cliniques" vidées (en-têtes réinitialisés). Relance "1. Découvrir les cliniques" pour repartir à zéro.');
 }
 
 function creerOuViderFeuille(ss, nom, headers) {
@@ -218,7 +219,8 @@ function decouvrirCliniques() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_CLINIQUES) || creerOuViderFeuille(ss, SHEET_CLINIQUES, HEADERS_CLINIQUES);
-  const existants = new Set(sheet.getDataRange().getValues().slice(1).map(r => r[4])); // PlaceId déjà connus
+  const placeIdCol = HEADERS_CLINIQUES.indexOf('PlaceId');
+  const existants = new Set(sheet.getDataRange().getValues().slice(1).map(r => r[placeIdCol])); // PlaceId déjà connus
 
   let ajoutes = 0;
   let exclus = 0;
@@ -247,14 +249,16 @@ function decouvrirCliniques() {
         if (nomExclu(place.name)) { exclus++; return; }
 
         const detailsUrl = 'https://maps.googleapis.com/maps/api/place/details/json?place_id=' + place.place_id
-          + '&fields=name,website&key=' + apiKey;
-        let website = '';
+          + '&fields=name,website,formatted_phone_number,formatted_address&key=' + apiKey;
+        let website = '', telephone = '', adresse = '';
         try {
-          const d = JSON.parse(UrlFetchApp.fetch(detailsUrl, { muteHttpExceptions: true }).getContentText()).result;
-          website = (d && d.website) || '';
+          const d = JSON.parse(UrlFetchApp.fetch(detailsUrl, { muteHttpExceptions: true }).getContentText()).result || {};
+          website = d.website || '';
+          telephone = d.formatted_phone_number || '';
+          adresse = d.formatted_address || place.formatted_address || '';
         } catch (e) {}
 
-        sheet.appendRow([place.name, ville, typeConfig.motCle, website, place.place_id, website ? 'Non traité' : 'Sans site', new Date()]);
+        sheet.appendRow([place.name, ville, typeConfig.motCle, website, telephone, adresse, place.place_id, website ? 'Non traité' : 'Sans site', new Date()]);
         ajoutes++;
         Utilities.sleep(PAUSE_MS);
       });
