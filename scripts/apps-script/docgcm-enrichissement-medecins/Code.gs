@@ -192,6 +192,7 @@ function decouvrirCliniques() {
   const existants = new Set(sheet.getDataRange().getValues().slice(1).map(r => r[4])); // PlaceId déjà connus
 
   let ajoutes = 0;
+  const erreursApi = new Set();
   VILLES.forEach(ville => {
     TYPES_ETABLISSEMENT.forEach(type => {
       const requete = type + ' ' + ville + ' Maroc';
@@ -202,6 +203,11 @@ function decouvrirCliniques() {
       try {
         data = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getContentText());
       } catch (e) { return; }
+
+      if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+        erreursApi.add(data.status + (data.error_message ? ' : ' + data.error_message : ''));
+        return;
+      }
 
       (data.results || []).forEach(place => {
         if (existants.has(place.place_id)) return;
@@ -221,6 +227,12 @@ function decouvrirCliniques() {
       });
     });
   });
+
+  if (ajoutes === 0 && erreursApi.size > 0) {
+    alerte('0 clinique découverte — erreur API Places :\n' + Array.from(erreursApi).join('\n') +
+      '\n\nVérifie que "Places API" (legacy) est activée et que la facturation est liée sur ton projet Google Cloud.');
+    return;
+  }
   alerte(ajoutes + ' clinique(s)/centre(s) découvert(s) et ajouté(s).');
 }
 
