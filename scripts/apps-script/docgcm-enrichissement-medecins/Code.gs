@@ -56,7 +56,24 @@ const BATCH_SIZE_CLINIQUES = 15; // v2 : cliniques traitées par exécution (lim
 const PAUSE_MS = 250;
 
 const VILLES = ['Casablanca', 'Rabat', 'Marrakech', 'Fès', 'Tanger', 'Agadir', 'Meknès', 'Oujda'];
-const TYPES_ETABLISSEMENT = ['clinique', 'polyclinique', 'centre médical', 'cabinet médical', 'cabinet de médecin'];
+const TYPES_ETABLISSEMENT = [
+  { motCle: 'cabinet médical', placeType: 'doctor' },
+  { motCle: 'cabinet de médecin', placeType: 'doctor' }
+];
+
+// Établissements qui remontent sur les mots-clés ci-dessus mais ne sont pas
+// des cliniques/cabinets médicaux (pharmacies, labos, esthétique, location
+// de matériel...). Filtrage sur le nom, insensible à la casse/aux accents.
+const MOTS_EXCLUS = [
+  'parapharmacie', 'pharmacie', 'locamed', 'location de matériel',
+  'beauté', 'esthétique', 'body center', 'assurance', 'handicap',
+  'laboratoire', 'biologie médicale', 'analyses médicales'
+];
+
+function nomExclu(nom) {
+  const norm = (nom || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return MOTS_EXCLUS.some(mot => norm.includes(mot.normalize('NFD').replace(/[̀-ͯ]/g, '')));
+}
 
 const GEMINI_MODEL = 'gemini-2.5-flash'; // rapide et économique, adapté à de l'extraction en volume
 
@@ -76,6 +93,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('🩺 Enrichissement Médecins')
     .addItem('Créer/réinitialiser les feuilles', 'setupSheets')
+    .addItem('Vider "Cliniques" et "Médecins - Cliniques" (repartir à zéro)', 'viderCliniques')
     .addSeparator()
     .addItem('Lancer l\'enrichissement par nom (v1, lot suivant)', 'enrichirMedecins')
     .addSeparator()
@@ -96,6 +114,17 @@ function setupSheets() {
     'Feuilles prêtes.\n\n"Médecins" : colle ta liste nominative (Nom/Prénom/Spécialité/Ville).\n' +
     '"Cliniques" et "Médecins - Cliniques" se remplissent automatiquement via le menu.'
   );
+}
+
+function viderCliniques() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  [SHEET_CLINIQUES, SHEET_MEDECINS_CLINIQUES].forEach(nom => {
+    const sheet = ss.getSheetByName(nom);
+    if (sheet && sheet.getLastRow() > 1) {
+      sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+    }
+  });
+  alerte('"Cliniques" et "Médecins - Cliniques" vidées. Relance "1. Découvrir les cliniques" pour repartir à zéro.');
 }
 
 function creerOuViderFeuille(ss, nom, headers) {
@@ -192,12 +221,14 @@ function decouvrirCliniques() {
   const existants = new Set(sheet.getDataRange().getValues().slice(1).map(r => r[4])); // PlaceId déjà connus
 
   let ajoutes = 0;
+  let exclus = 0;
   const erreursApi = new Set();
   VILLES.forEach(ville => {
-    TYPES_ETABLISSEMENT.forEach(type => {
-      const requete = type + ' ' + ville + ' Maroc';
-      const url = 'https://maps.googleapis.com/maps/api/place/textsearch/json?query='
+    TYPES_ETABLISSEMENT.forEach(typeConfig => {
+      const requete = typeConfig.motCle + ' ' + ville + ' Maroc';
+      let url = 'https://maps.googleapis.com/maps/api/place/textsearch/json?query='
         + encodeURIComponent(requete) + '&key=' + apiKey;
+      if (typeConfig.placeType) url += '&type=' + typeConfig.placeType;
 
       let data;
       try {
@@ -213,6 +244,8 @@ function decouvrirCliniques() {
         if (existants.has(place.place_id)) return;
         existants.add(place.place_id);
 
+        if (nomExclu(place.name)) { exclus++; return; }
+
         const detailsUrl = 'https://maps.googleapis.com/maps/api/place/details/json?place_id=' + place.place_id
           + '&fields=name,website&key=' + apiKey;
         let website = '';
@@ -221,7 +254,7 @@ function decouvrirCliniques() {
           website = (d && d.website) || '';
         } catch (e) {}
 
-        sheet.appendRow([place.name, ville, type, website, place.place_id, website ? 'Non traité' : 'Sans site', new Date()]);
+        sheet.appendRow([place.name, ville, typeConfig.motCle, website, place.place_id, website ? 'Non traité' : 'Sans site', new Date()]);
         ajoutes++;
         Utilities.sleep(PAUSE_MS);
       });
@@ -233,7 +266,8 @@ function decouvrirCliniques() {
       '\n\nVérifie que "Places API" (legacy) est activée et que la facturation est liée sur ton projet Google Cloud.');
     return;
   }
-  alerte(ajoutes + ' clinique(s)/centre(s) découvert(s) et ajouté(s).');
+  alerte(ajoutes + ' cabinet(s) médical(aux) découvert(s) et ajouté(s)'
+    + (exclus > 0 ? ' (' + exclus + ' exclu(s) : pharmacie/labo/beauté/etc.)' : '') + '.');
 }
 
 // ===================================================================
