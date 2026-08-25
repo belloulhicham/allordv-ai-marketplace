@@ -56,7 +56,7 @@ const BATCH_SIZE_CLINIQUES = 15; // v2 : cliniques traitées par exécution (lim
 const PAUSE_MS = 250;
 
 const VILLES = ['Casablanca', 'Rabat', 'Marrakech', 'Fès', 'Tanger', 'Agadir', 'Meknès', 'Oujda'];
-const TYPES_ETABLISSEMENT = ['clinique', 'polyclinique', 'centre médical'];
+const TYPES_ETABLISSEMENT = ['clinique', 'polyclinique', 'centre médical', 'cabinet médical', 'cabinet de médecin'];
 
 const GEMINI_MODEL = 'gemini-2.5-flash'; // rapide et économique, adapté à de l'extraction en volume
 
