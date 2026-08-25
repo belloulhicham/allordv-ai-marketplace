@@ -10,7 +10,7 @@ Laravel de ce dépôt. Conservé ici pour versionnement/backup.
    aussi les fonctions v1, rien n'est perdu).
 3. `Project Settings > Script Properties`, ajoute :
    - `GOOGLE_PLACES_API_KEY` — clé API Google Places
-   - `ANTHROPIC_API_KEY` — clé API Claude (console.anthropic.com)
+   - `GEMINI_API_KEY` — clé API Gemini (gratuite sur aistudio.google.com/apikey)
 4. Actualise le Sheet (F5), menu **🩺 Enrichissement Médecins**.
 5. "Créer/réinitialiser les feuilles" (crée les 3 onglets : Médecins,
    Cliniques, Médecins - Cliniques).

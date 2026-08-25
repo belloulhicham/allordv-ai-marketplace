@@ -1,13 +1,13 @@
 /**
  * ===================================================================
- * ENRICHISSEMENT BASE MÉDECINS v2 - Places API + Claude API + Sheets
+ * ENRICHISSEMENT BASE MÉDECINS v2 - Places API + Gemini API + Sheets
  * DocGCM - Hicham
  * ===================================================================
  *
  * NOUVEAU DANS CETTE VERSION :
  * En plus de la recherche par nom (v1), ce script découvre les
  * cliniques/polycliniques/centres médicaux par ville via Places API,
- * va lire leur site web, et utilise l'API Claude pour EXTRAIRE la
+ * va lire leur site web, et utilise l'API Gemini pour EXTRAIRE la
  * liste des médecins qui y travaillent (nom, spécialité, téléphone,
  * email) — peu importe la structure HTML du site, contrairement à un
  * script de scraping classique qui doit être codé site par site.
@@ -25,7 +25,7 @@
  *    perdu)
  * 2. Project Settings > Script Properties > vérifie que tu as :
  *    - GOOGLE_PLACES_API_KEY (déjà fait normalement)
- *    - ANTHROPIC_API_KEY (nouveau — clé API Claude, sur console.anthropic.com)
+ *    - GEMINI_API_KEY (nouveau — clé API Gemini, gratuite sur aistudio.google.com/apikey)
  * 3. Actualise le Sheet (F5), menu "🩺 Enrichissement Médecins"
  * 4. "Créer/réinitialiser les feuilles" (crée les 3 onglets)
  * 5. "1. Découvrir les cliniques" — remplit l'onglet "Cliniques"
@@ -34,9 +34,9 @@
  *    plusieurs fois jusqu'à ce que toutes les cliniques soient traitées
  *
  * COÛT (en plus de Places API, voir v1) :
- * Claude Haiku (modèle utilisé ici, le plus économique) coûte environ
- * 1$ pour ~700-1000 pages de site web extraites. Pour quelques
- * centaines de cliniques, ça reste de l'ordre de quelques dollars.
+ * Gemini Flash (modèle utilisé ici) a un palier gratuit généreux
+ * (voir ai.google.dev/pricing) ; au-delà, ça reste très économique
+ * pour quelques centaines de cliniques.
  *
  * RAPPEL FIABILITÉ :
  * L'IA peut se tromper ou mal lire une page mal structurée. Chaque
@@ -58,7 +58,7 @@ const PAUSE_MS = 250;
 const VILLES = ['Casablanca', 'Rabat', 'Marrakech', 'Fès', 'Tanger', 'Agadir', 'Meknès', 'Oujda'];
 const TYPES_ETABLISSEMENT = ['clinique', 'polyclinique', 'centre médical'];
 
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'; // rapide et économique, adapté à de l'extraction en volume
+const GEMINI_MODEL = 'gemini-2.5-flash'; // rapide et économique, adapté à de l'extraction en volume
 
 const HEADERS_MEDECINS = [
   'Nom', 'Prénom', 'Spécialité', 'Ville',
@@ -225,11 +225,11 @@ function decouvrirCliniques() {
 }
 
 // ===================================================================
-// V2 - EXTRACTION DES MÉDECINS PAR IA (Claude API)
+// V2 - EXTRACTION DES MÉDECINS PAR IA (Gemini API)
 // ===================================================================
 function extraireDepuisCliniques() {
-  const anthropicKey = getProp('ANTHROPIC_API_KEY');
-  if (!anthropicKey) return alerte('Clé ANTHROPIC_API_KEY manquante dans Script Properties.');
+  const geminiKey = getProp('GEMINI_API_KEY');
+  if (!geminiKey) return alerte('Clé GEMINI_API_KEY manquante dans Script Properties.');
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetCliniques = ss.getSheetByName(SHEET_CLINIQUES);
@@ -250,7 +250,7 @@ function extraireDepuisCliniques() {
     let medecins = [];
     try {
       const texte = recupererTexteBrut(website);
-      medecins = appellerClaudeExtraction(texte, anthropicKey);
+      medecins = appellerGeminiExtraction(texte, geminiKey);
     } catch (e) {
       sheetCliniques.getRange(i + 1, statutCol + 1).setValue('Erreur : ' + e.message);
       traites++;
@@ -284,8 +284,8 @@ function recupererTexteBrut(url) {
   return html.substring(0, 12000); // limite pour rester raisonnable en tokens
 }
 
-// Appelle l'API Claude pour extraire les médecins d'un texte de page web
-function appellerClaudeExtraction(texte, apiKey) {
+// Appelle l'API Gemini pour extraire les médecins d'un texte de page web
+function appellerGeminiExtraction(texte, apiKey) {
   const prompt = 'Voici le contenu texte d\'une page web d\'un établissement médical au Maroc. ' +
     'Extrais la liste des médecins mentionnés avec leurs informations disponibles. ' +
     'Réponds UNIQUEMENT avec un tableau JSON valide, sans aucun texte avant ou après, format exact : ' +
@@ -293,25 +293,26 @@ function appellerClaudeExtraction(texte, apiKey) {
     'Si une information n\'est pas disponible, mets une chaîne vide "". ' +
     'Si aucun médecin n\'est identifiable dans ce texte, réponds [].\n\nContenu de la page:\n\n' + texte;
 
-  const response = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL
+    + ':generateContent?key=' + apiKey;
+
+  const response = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
     payload: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1500,
-      messages: [{ role: 'user', content: prompt }]
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 1500, temperature: 0 }
     }),
     muteHttpExceptions: true
   });
 
   const data = JSON.parse(response.getContentText());
-  if (!data.content || !data.content[0] || !data.content[0].text) return [];
+  const partie = data.candidates && data.candidates[0]
+    && data.candidates[0].content && data.candidates[0].content.parts
+    && data.candidates[0].content.parts[0];
+  if (!partie || !partie.text) return [];
 
-  let texteReponse = data.content[0].text.trim();
+  let texteReponse = partie.text.trim();
   texteReponse = texteReponse.replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   try {
     return JSON.parse(texteReponse);
